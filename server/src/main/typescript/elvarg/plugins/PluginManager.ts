@@ -2055,6 +2055,7 @@ export class PluginManager {
       MapObjects: require("../game/entity/impl/object/MapObjects").MapObjects,
       ItemOnGroundManager: require("../game/entity/impl/grounditem/ItemOnGroundManager").ItemOnGroundManager,
       ItemDefinition: require("../game/definition/ItemDefinition").ItemDefinition,
+      EquipPacketListener: require("../net/packet/impl/EquipPacketListener").EquipPacketListener,
       CacheDefinitions: require("../game/cache/CacheDefinitions").CacheDefinitions,
       PathFinder: require(`${model}/movement/path/PathFinder`).PathFinder,
       RsmodRouteFinding: require(`${model}/movement/path/RsmodRouteFinding`).RsmodRouteFinding,
@@ -2078,6 +2079,7 @@ export class PluginManager {
       OptionDialogue: require(`${model}/dialogues/entries/impl/OptionDialogue`).OptionDialogue,
       StatementDialogue: require(`${model}/dialogues/entries/impl/StatementDialogue`).StatementDialogue,
       ItemStatementDialogue: require(`${model}/dialogues/entries/impl/ItemStatementDialogue`).ItemStatementDialogue,
+      DoubleItemStatementDialogue: require(`${model}/dialogues/entries/impl/DoubleItemStatementDialogue`).DoubleItemStatementDialogue,
       ActionDialogue: require(`${model}/dialogues/entries/impl/ActionDialogue`).ActionDialogue,
       EndDialogue: require(`${model}/dialogues/entries/impl/EndDialogue`).EndDialogue,
       CreationMenu: require(`${model}/menu/CreationMenu`).CreationMenu,
@@ -2422,18 +2424,19 @@ export class PluginManager {
     };
 
     const registerNpcActions = (
-      name: string | null,
+      names: string | string[] | null,
       actions: Record<string, (event: PluginNpcInteractionEvent) => void | boolean>
     ): void => {
       const handlers = new Map(Object.entries(actions ?? {}).filter(([, action]) => typeof action === "function"));
+      const nameSet = names === null ? null : new Set(Array.isArray(names) ? names : [names]);
       // Name-specific actions are "specific" and run before the generic any-NPC hooks.
-      const hookList = name === null
+      const hookList = names === null
         ? PluginManager.npcAnyInteractionHooks
         : PluginManager.npcInteractionHooks;
       hookList.push({ pluginName, handler: (event) => {
         if (event.handled || !Number.isInteger(event.clickType) || event.clickType < 1 || event.clickType > 5) return;
         const definition = event.definition;
-        if (!definition || (name !== null && definition.getName() !== name)) return;
+        if (!definition || (nameSet !== null && !nameSet.has(definition.getName()))) return;
         const action = handlers.get(definition.getActions()?.[event.clickType - 1]);
         if (action && action(event) !== false) event.handled = true;
       } });
@@ -2708,6 +2711,17 @@ export class PluginManager {
         } else if (typeof handler === "string" && actions) {
           registerNpcActions(handler, actions);
         }
+      },
+      onNpcsInteraction: (
+        names: string[],
+        actions: Record<string, (event: PluginNpcInteractionEvent) => void | boolean>
+      ) => {
+        if (!Array.isArray(names) || !actions) return;
+        const valid = names.filter((name) => typeof name === "string" && name.length > 0);
+        if (valid.length !== names.length) {
+          console.warn(`[plugins] ${pluginName} onNpcsInteraction dropped ${names.length - valid.length} invalid name(s)`);
+        }
+        if (valid.length) registerNpcActions(valid, actions);
       },
       onAnyNpcInteraction: (actions) => registerNpcActions(null, actions),
       onNpcDialogueVariant: (handler) => {
