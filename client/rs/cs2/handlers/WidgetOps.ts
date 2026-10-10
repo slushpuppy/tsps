@@ -3359,6 +3359,12 @@ export function registerWidgetOps(handlers: HandlerMap): void {
         ctx.forwardIfTriggerOpLocal();
     });
 
+    handlers.set(Opcodes.CC_TRIGGEROPLOCAL, (ctx) => {
+        // Fixed arg shape (int, int, int, string, int, int) — see forwardCCTriggerOpLocal.
+        // Used by the settings sliders ("Adjust Brightness" etc., e.g. script 526).
+        ctx.forwardCCTriggerOpLocal();
+    });
+
     handlers.set(Opcodes.CC_RESUME_PAUSEBUTTON, (ctx, intOp) => {
         // Resume paused button - signals that a dialog continue button was clicked.
         // Uses the widget's id (parent UID), not its uid. Like the other cc_ ops, the operand

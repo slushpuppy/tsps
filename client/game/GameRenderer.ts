@@ -70,6 +70,13 @@ export abstract class GameRenderer<T extends MapSquare = MapSquare> extends Rend
     uiHidden: boolean = false;
     widgetsOverlay?: WidgetsOverlay;
 
+    /**
+     * Scene brightness multiplier (u_brightness), 0..1 (1 = full brightness).
+     * Driven by the in-game Settings "Screen Brightness" slider (VARP_BRIGHTNESS)
+     * and the Leva debug panel; consumed by the renderer's scene uniform buffer.
+     */
+    brightness: number = 0.8;
+
     /** Drops any cached roof visibility state so the next frame recomputes it. */
     invalidateRoofState(): void {}
 
