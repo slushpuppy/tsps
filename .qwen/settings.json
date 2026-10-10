@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls *)",
+      "Bash(cd *)",
+      "Bash(grep *)",
+      "Bash(head *)",
+      "Bash(head)",
+      "Bash(git diff *)",
+      "Bash(node *)",
+      "Bash(python3 *)"
+    ]
+  },
+  "$version": 4
+}
