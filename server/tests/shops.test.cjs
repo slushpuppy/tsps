@@ -67,17 +67,21 @@ function createPlayer() {
   });
   const messages = [];
   const attributes = new Map();
+  // Only the shop protocol writes straight to the session - everything else goes
+  // through the no-op sender - so this records the shop frames on their own.
+  const packets = [];
   let status = PlayerStatus.NONE;
   let interfaceId = -1;
   const player = {
     messages,
     varbits,
+    packets,
     getAttribute: (key) => attributes.get(key),
     setAttribute: (key, value) => attributes.set(key, value),
     getUsername: () => "alice",
     sendMessage: (message) => messages.push(message),
     getPacketSender: () => sender,
-    getSession: () => ({ sendClientPacket: () => true }),
+    getSession: () => ({ sendClientPacket: (frame) => (packets.push(frame), true) }),
     getStatus: () => status,
     setStatus: (next) => { status = next; },
     getInterfaceId: () => interfaceId,
@@ -208,4 +212,112 @@ test("the quantity buttons set what an item's left-click buys, and the choice is
     groupId: ShopManager.MAIN_INTERFACE_ID, childId: 16, buttonNum: 1, slot: 1, itemId: BRONZE_AXE,
   });
   assert.equal(player.getInventory().getAmount(BRONZE_AXE), 2, "buys up to 5, capped at the 2 in stock");
+});
+
+const SHOP_OPEN = 150;
+const SHOP_SLOT = 151;
+
+/** Reads a SHOP_SLOT frame the way the client's ServerBinaryDecoder does. */
+function decodeShopSlot(frame) {
+  assert.equal(frame[0], SHOP_SLOT);
+  const idEnd = frame.indexOf(0, 2);
+  const body = idEnd + 1;
+  return {
+    shopId: frame.toString("latin1", 2, idEnd),
+    slot: frame.readUInt16BE(body),
+    itemId: frame.readUInt16BE(body + 2),
+    quantity: frame.readInt32BE(body + 4),
+    defaultQuantity: frame.readInt32BE(body + 8),
+    priceEach: frame.readInt32BE(body + 12),
+    sellPrice: frame.readInt32BE(body + 16),
+  };
+}
+
+const opcodesOf = (player) => player.packets.map((frame) => frame[0]);
+const slotsOf = (player) => player.packets
+  .filter((frame) => frame[0] === SHOP_SLOT)
+  .map(decodeShopSlot)
+  .map(({ shopId, slot, itemId, quantity }) => [shopId, slot, itemId, quantity]);
+
+// Reopening the shop is what makes a slow client fall behind: it remounts both
+// sub-interfaces and re-renders every slot. A stock change must not do that.
+test("a purchase patches the one slot that moved instead of reopening the shop", () => {
+  const player = openShop();
+  player.packets.length = 0;
+
+  buy(player, 0, BRONZE_AXE);
+
+  assert.deepEqual(slotsOf(player), [[String(AXE_SHOP), 0, BRONZE_AXE, 1]]);
+  assert.ok(!opcodesOf(player).includes(SHOP_OPEN), `reopened on a purchase: ${opcodesOf(player)}`);
+  assert.equal(player.getInventory().getAmount(BRONZE_AXE), 1);
+  assert.deepEqual(stockOf(), [[BRONZE_AXE, 1], [STEEL_AXE, 1]]);
+});
+
+test("buying the last of an item patches its slot to 0, keeping the interface open", () => {
+  const player = openShop();
+
+  buy(player, 0, BRONZE_AXE);
+  player.packets.length = 0;
+  buy(player, 0, BRONZE_AXE);
+
+  assert.deepEqual(slotsOf(player), [[String(AXE_SHOP), 0, BRONZE_AXE, 0]]);
+  assert.ok(!opcodesOf(player).includes(SHOP_OPEN), `reopened when stock hit 0: ${opcodesOf(player)}`);
+  assert.deepEqual(stockOf(), [[BRONZE_AXE, 0], [STEEL_AXE, 1]]);
+});
+
+test("a patch carries the price the full stock listing would have", () => {
+  const player = openShop();
+  player.packets.length = 0;
+
+  buy(player, 1, STEEL_AXE);
+
+  assert.deepEqual(
+    player.packets.filter((frame) => frame[0] === SHOP_SLOT).map(decodeShopSlot),
+    [{
+      shopId: String(AXE_SHOP), slot: 1, itemId: STEEL_AXE, quantity: 0,
+      defaultQuantity: 1, priceEach: 200, sellPrice: Math.floor(200 * 0.85),
+    }],
+  );
+});
+
+test("a restock patches the viewer's slot rather than reopening", () => {
+  const player = openShop();
+  buy(player, 0, BRONZE_AXE);
+  assert.deepEqual(stockOf(), [[BRONZE_AXE, 1], [STEEL_AXE, 1]]);
+  player.packets.length = 0;
+
+  // The axe shop restocks one item every 100 ticks.
+  for (let tick = 0; tick < 120 && stockOf()[0][1] < 2; tick++) ShopManager.restockAll();
+
+  assert.equal(stockOf()[0][1], 2, "bronze axes restock back to 2");
+  assert.deepEqual(slotsOf(player), [[String(AXE_SHOP), 0, BRONZE_AXE, 2]]);
+  assert.ok(!opcodesOf(player).includes(SHOP_OPEN), `reopened on a restock: ${opcodesOf(player)}`);
+});
+
+test("an item joining the display reopens the shop, as every slot after it shifts", () => {
+  const player = openShop(10000, GENERAL_STORE);
+  player.getInventory().add(new Item(STEEL_AXE, 1), false);
+  player.packets.length = 0;
+
+  sell(player, 1);
+
+  assert.deepEqual(stockOf(GENERAL_STORE), [[BRONZE_AXE, 3], [STEEL_AXE, 1]]);
+  assert.ok(opcodesOf(player).includes(SHOP_OPEN), `expected a reopen, got ${opcodesOf(player)}`);
+  assert.deepEqual(slotsOf(player), [], "a reshape sends the whole stock, not a patch");
+
+  // The reopen re-baselines the viewer, so the next change patches again.
+  player.packets.length = 0;
+  buy(player, 0, BRONZE_AXE);
+  assert.deepEqual(slotsOf(player), [[String(GENERAL_STORE), 0, BRONZE_AXE, 2]]);
+  assert.ok(!opcodesOf(player).includes(SHOP_OPEN), `reopened after a reshape: ${opcodesOf(player)}`);
+});
+
+test("a reload reopens the shop, as a stock patch carries no price", () => {
+  const player = openShop();
+  player.packets.length = 0;
+
+  ShopManager.reload();
+
+  assert.ok(opcodesOf(player).includes(SHOP_OPEN), `expected a reopen, got ${opcodesOf(player)}`);
+  assert.deepEqual(stockOf(), [[BRONZE_AXE, 2], [STEEL_AXE, 1]], "a reload restores the original stock");
 });

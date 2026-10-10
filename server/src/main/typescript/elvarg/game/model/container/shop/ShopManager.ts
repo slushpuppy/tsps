@@ -10,7 +10,7 @@ import { PluginManager } from "../../../../plugins/PluginManager";
 import { ItemIdentifiers } from "../../../../util/ItemIdentifiers";
 import { Misc } from "../../../../util/Misc";
 import { ShopIdentifiers } from "../../../../util/ShopIdentifiers";
-import { encodeShopClose, encodeShopOpen } from "../../../../net/protocol/ClientProtocol";
+import { encodeShopClose, encodeShopOpen, encodeShopSlot, type ShopSlotView } from "../../../../net/protocol/ClientProtocol";
 import { PlayerSave } from "../../../entity/impl/player/persistence/PlayerSave";
 
 export interface ShopItemContainerAction {
@@ -83,6 +83,8 @@ export class ShopManager {
     private static readonly shopsById = new Map<number, RuntimeShop>();
     private static readonly activeShopByPlayer = new WeakMap<object, number>();
     private static readonly activeTargetByPlayer = new WeakMap<object, number>();
+    /** The stock each viewer last received, so a refresh sends only the slots that moved. */
+    private static readonly sentStockByPlayer = new WeakMap<object, DisplayEntry[]>();
     private static readonly viewersByShopId = new Map<number, Set<any>>();
     private static restockTaskRunning = false;
     private static readonly currencyHandlers = new Map<string, ShopCurrencyHandler>();
@@ -139,6 +141,11 @@ export class ShopManager {
                 }
                 continue;
             }
+            // A reload can reprice or rename a shop, which a stock delta does not
+            // carry, so every viewer reopens rather than getting patched.
+            for (const player of Array.from(this.viewersByShopId.get(shopId) ?? [])) {
+                this.sentStockByPlayer.delete(player);
+            }
             this.refresh(shopId);
         }
         return this.shopsById.size;
@@ -166,6 +173,7 @@ export class ShopManager {
         if (!player) {
             return;
         }
+        this.sentStockByPlayer.delete(player);
         const shopId = this.activeShopByPlayer.get(player);
         if (!Number.isInteger(shopId)) {
             return;
@@ -446,15 +454,8 @@ export class ShopManager {
         const opening =
             !this.isOpen(player);
 
-        const stock = this.displayEntries(shop).map((entry, slot) => {
-            const definition = ItemDefinition.forId(entry.itemId);
-            const price = definition ? this.itemPrice(shop, definition) : 0;
-            return {
-                slot, itemId: entry.itemId, quantity: entry.amount,
-                defaultQuantity: shop.originalAmounts.get(entry.itemId) ?? 0,
-                priceEach: price, sellPrice: Math.max(1, Math.floor(price * this.SALES_TAX)),
-            };
-        });
+        const entries = this.displayEntries(shop);
+        const stock = entries.map((entry, slot) => this.slotView(shop, entry, slot));
         player.setInterfaceId(this.MAIN_INTERFACE_ID);
         player.setStatus(PlayerStatus.SHOPPING);
         sender.sendVarbit(this.QUANTITY_VARBIT, this.quantityMode(player));
@@ -469,7 +470,47 @@ export class ShopManager {
             String(shop.definition.getId()), shop.definition.getName(),
             this.currencyItemId(shop.definition.getCurrency()), this.isGeneralStore(shop), 1, 1, stock
         ));
+        this.sentStockByPlayer.set(player, entries);
         if (opening) Sounds.sendSound(player, Sound.CONTAINER_OPEN);
+        return true;
+    }
+
+    /** One slot as the shop grid reads it: what it costs, and what selling it back returns. */
+    private static slotView(shop: RuntimeShop, entry: DisplayEntry, slot: number): ShopSlotView {
+        const definition = ItemDefinition.forId(entry.itemId);
+        const price = definition ? this.itemPrice(shop, definition) : 0;
+        return {
+            slot, itemId: entry.itemId, quantity: entry.amount,
+            defaultQuantity: shop.originalAmounts.get(entry.itemId) ?? 0,
+            priceEach: price, sellPrice: Math.max(1, Math.floor(price * this.SALES_TAX)),
+        };
+    }
+
+    /**
+     * Sends just the slots whose stock moved, leaving the open interface alone.
+     * Returns false when the display changed shape - an item joining or leaving
+     * shifts every slot after it, and the client patches by slot index, so that
+     * still needs a full reopen.
+     */
+    private static sendStockDelta(player: any, shop: RuntimeShop): boolean {
+        const entries = this.displayEntries(shop);
+        const sent = this.sentStockByPlayer.get(player);
+        if (
+            !sent ||
+            sent.length !== entries.length ||
+            sent.some((entry, slot) => entry.itemId !== entries[slot].itemId)
+        ) {
+            return false;
+        }
+        const session = player.getSession();
+        const shopId = String(shop.definition.getId());
+        for (let slot = 0; slot < entries.length; slot++) {
+            if (sent[slot].amount === entries[slot].amount) {
+                continue;
+            }
+            session.sendClientPacket(encodeShopSlot(shopId, this.slotView(shop, entries[slot], slot)));
+        }
+        this.sentStockByPlayer.set(player, entries);
         return true;
     }
 
@@ -485,6 +526,9 @@ export class ShopManager {
                 this.activeShopByPlayer.get(player) !== shopId
             ) {
                 this.close(player);
+                continue;
+            }
+            if (this.sendStockDelta(player, shop)) {
                 continue;
             }
             this.openInterface(

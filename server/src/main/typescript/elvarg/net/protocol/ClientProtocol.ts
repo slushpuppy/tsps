@@ -1411,6 +1411,14 @@ export function encodeShopOpen(id: string, name: string, currencyItemId: number,
   return encodeServerPacket(ServerPacketId.SHOP_OPEN, Buffer.concat([string(id), string(name), header, ...stock.map(encodeShopSlotPayload)]));
 }
 
+/** One slot of an already-open shop, so a purchase need not reopen the whole interface. */
+export function encodeShopSlot(id: string, slot: ShopSlotView): Buffer {
+  return encodeServerPacket(
+    ServerPacketId.SHOP_SLOT,
+    Buffer.concat([string(id), encodeShopSlotPayload(slot)])
+  );
+}
+
 export function encodeShopClose(): Buffer {
   return encodeServerPacket(ServerPacketId.SHOP_CLOSE, Buffer.alloc(0));
 }

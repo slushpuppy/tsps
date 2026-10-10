@@ -6846,17 +6846,25 @@ export class OsrsClient {
             console.log("[shop] server update", state.stock?.length ?? 0, "items");
         } catch {}
 
-        // Clear existing items and populate with shop stock
-        this.shopInventory.clear();
-
-        if (Array.isArray(state.stock)) {
-            for (const entry of state.stock) {
-                const slot = Math.max(0, Math.min(299, entry.slot | 0));
-                const itemId = entry.itemId | 0;
-                const quantity = typeof entry.quantity === "number" ? entry.quantity | 0 : 1;
-                if (itemId > 0) {
-                    this.shopInventory.setSlot(slot, itemId, quantity);
-                }
+        // Patch only the slots that moved. The server now sends a single slot per
+        // purchase, and clearing all 300 first would re-emit every one as a change.
+        const stock = Array.isArray(state.stock) ? state.stock : [];
+        const capacity = this.shopInventory.capacity;
+        const listed = new Uint8Array(capacity);
+        for (const entry of stock) {
+            const slot = Math.max(0, Math.min(capacity - 1, entry.slot | 0));
+            const itemId = entry.itemId | 0;
+            const quantity = typeof entry.quantity === "number" ? entry.quantity | 0 : 1;
+            if (itemId <= 0) continue;
+            listed[slot] = 1;
+            if (!this.shopInventory.matchesSlot(slot, itemId, quantity)) {
+                this.shopInventory.setSlot(slot, itemId, quantity);
+            }
+        }
+        // Stock that left the display (a sold-in item running out) has no entry to clear it.
+        for (let slot = 0; slot < capacity; slot++) {
+            if (!listed[slot] && !this.shopInventory.matchesSlot(slot, -1, 0)) {
+                this.shopInventory.setSlot(slot, -1, 0);
             }
         }
 
