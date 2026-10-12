@@ -13,6 +13,7 @@ const ClueNests = require("./woodcutting/ClueNests.Woodcutting");
 const InfernalAxe = require("./woodcutting/InfernalAxe.Woodcutting");
 const CrystalAxe = require("./woodcutting/CrystalAxe.Woodcutting");
 const EntTrunk = require("./woodcutting/EntTrunk.Woodcutting");
+const ThickVines = require("./woodcutting/ThickVines.Woodcutting");
 const Shrine = require("./woodcutting/Shrine.Woodcutting");
 
 const DEFAULT_TREE_STUMP_ID = ObjectIds.TREE_STUMP_2;
@@ -1136,12 +1137,13 @@ module.exports = {
     InfernalAxe.attach(api);
     CrystalAxe.attach(api);
     EntTrunk.attach(api, { findBestUsableAxe, calculateCutChance, lumberjackXpMultiplier, maybeDropBirdNest });
+    ThickVines.attach(api, { axesBestFirst: AXES_BEST_FIRST, lumberjackXpMultiplier });
     Shrine.attach(api);
 
     api.onPlayerDisconnect(({ player }) => {
       stopWoodcutting(activeSessions, player, false);
     });
-    api.onPlayerLevelUp(({ player }) => {
+    api.onCustomEvent("level-up:popup-opened", ({ player }) => {
       stopWoodcutting(activeSessions, player, false);
     });
 

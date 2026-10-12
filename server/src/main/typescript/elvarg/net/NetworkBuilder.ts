@@ -29,6 +29,7 @@ import {
   decodeClientPackets,
   MAIN_INVENTORY_GROUP_ID,
   MOBILE_CLIENT_ATTRIBUTE,
+  XPDROPS_ENABLED_ATTRIBUTE,
   encodeDefaultAnimations,
   encodeGameframeBootstrap,
   encodeHandshake,
@@ -737,8 +738,10 @@ export class ClientConnection {
           continue;
         case "examine_object":
           if (this.player) {
+            // A multi-loc's text can be recorded under the variant this player sees.
             const definition = ObjectDefinition.forId(packet.id);
-            this.player.sendMessage(definition?.getExamine() ?? "It's nothing special.");
+            const seen = ObjectDefinition.examineText(packet.id) === null ? ObjectDefinition.forPlayer(packet.id, this.player) : null;
+            this.player.sendMessage((seen && ObjectDefinition.examineText(seen.id) ? seen : definition)?.getExamine() ?? "It's nothing special.");
           }
           continue;
         case "appearance":
@@ -966,7 +969,7 @@ export class ClientConnection {
     // stores; the client maps the standard mounts onto the chosen layout.
     // Mobile clients resolve to the stock mobile toplevel (601) instead.
     const layoutRoot = resolveGameframeRoot(player);
-    for (const packet of encodeGameframeBootstrap(player.getUsername(), layoutRoot)) this.send(packet);
+    for (const packet of encodeGameframeBootstrap(player.getUsername(), layoutRoot, player.getAttribute(XPDROPS_ENABLED_ATTRIBUTE) === true)) this.send(packet);
     player.getPacketSender()
       // The bootstrap mounts the magic tab (161:82 -> 218) directly, which does not send
       // varbit 4070, so the cache scripts would draw the standard book for everyone.

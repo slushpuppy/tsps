@@ -1177,6 +1177,7 @@ export interface PluginCoreApi {
   CombatMethod: any;
   CombatSpecial: any;
   CombatFactory: any;
+  CombatEquipment: any;
   CanAttackResponse: any;
   CombatType: any;
   SkullType: any;
@@ -1244,7 +1245,12 @@ export interface PluginCoreApi {
   ItemOnGroundManager: any;
   ItemDefinition: any;
   EquipPacketListener: any;
+  /** The death task; `getItemsToKeep(player)` is what a death would let the player keep. */
+  PlayerDeathTask: any;
+  /** Which items poison, and how strongly. */
+  CombatPoisonData: any;
   CacheDefinitions: any;
+  Wilderness: any;
   PathFinder: any;
   RsmodRouteFinding: any;
   NpcDefinition: any;
@@ -1274,6 +1280,7 @@ export interface PluginCoreApi {
   Server: any;
   PluginManager: any;
   ShopManager: any;
+  ShopDefinition: any;
   MultiChatboxPrompt: any;
   dispatchClientMessages: (player: any, messages: any[]) => boolean;
   connectHeadlessClient: (username: string, password: string) => Promise<{ player?: any; error?: string }>;
