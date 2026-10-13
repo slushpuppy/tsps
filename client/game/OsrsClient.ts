@@ -4089,6 +4089,13 @@ export class OsrsClient {
         this.widgetTransmitProcessor.processWidgetTransmits();
     }
 
+    /** Per frame: moves the cursor mouseover box to where the mouse is now (see WidgetTransmitProcessor). */
+    runMouseFollowingTimers(): void {
+        const input = this.inputManager;
+        if (!this.widgetTransmitProcessor || !input) return;
+        this.widgetTransmitProcessor.runMouseFollowingTimers(input.mouseX, input.mouseY);
+    }
+
     private applyMasterVolume(): void {
         this.audioVarp.applyMasterVolume();
     }
@@ -6520,6 +6527,7 @@ export class OsrsClient {
                     markVarTransmit(varpId);
                 }
                 this.applyAudioVarpChange(varpId, newValue);
+                this.renderer?.onVarpChange(varpId);
                 if (!this._serverVarpSync && TRANSMIT_VARPS.has(varpId) && isServerConnected()) {
                     try {
                         sendVarpTransmit(varpId, newValue);
@@ -7701,6 +7709,12 @@ export class OsrsClient {
             instance.modelOverride = { baseId, models: entries.map((entry) => ({ slot: entry.slot | 0, modelId: entry.modelId | 0 })) };
         }
         const nextTypeId = this.npcModelOverrides.get(sid) ?? baseId;
+        // The WebGPU actor renderer resolves each NPC's model per frame from the
+        // ECS type id, so re-point that too or the customisation never shows.
+        const ecsId = this.npcEcs.getEcsIdForServer(sid);
+        if (ecsId !== undefined && (this.npcEcs.getNpcTypeId(ecsId) | 0) !== (nextTypeId | 0)) {
+            this.npcEcs.setNpcTypeId(ecsId, nextTypeId | 0);
+        }
         if ((instance.typeId | 0) !== (nextTypeId | 0)) {
             instance.typeId = nextTypeId | 0;
             this.npcInstances.markMapPendingReload(this.getNpcInstanceRenderMapId(instance));
@@ -7733,6 +7747,12 @@ export class OsrsClient {
             if (prev) delete (prev as { modelOverride?: unknown }).modelOverride;
         }
         const renderTypeId = override !== undefined && baseNpcTypeId(override) === (typeId | 0) ? override : typeId | 0;
+        // Keep the ECS render type authoritative alongside the instance snapshot
+        // (a transformation, or the drop above, must show the server's type).
+        const ecsForType = this.npcEcs.getEcsIdForServer(sid);
+        if (ecsForType !== undefined && (this.npcEcs.getNpcTypeId(ecsForType) | 0) !== (renderTypeId | 0)) {
+            this.npcEcs.setNpcTypeId(ecsForType, renderTypeId | 0);
+        }
         const nextInstance: NpcInstance = {
             serverId: sid,
             typeId: renderTypeId,
