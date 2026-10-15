@@ -31,6 +31,15 @@ const SMITHING_BAR_TYPE_BY_ITEM_ID = new Map([
   [2363, 6], // Runite
   [13354, 7], // Blurite
 ]);
+// OSRS Wiki: Smithing#Smithing_tables - XP per bar consumed, not per item produced.
+const SMITHING_XP_PER_BAR = new Map([
+  [ItemIds.BRONZE_BAR, 12.5],
+  [ItemIds.IRON_BAR, 25],
+  [ItemIds.STEEL_BAR, 37.5],
+  [ItemIds.MITHRIL_BAR, 50],
+  [ItemIds.ADAMANTITE_BAR, 62.5],
+  [ItemIds.RUNITE_BAR, 75],
+]);
 const SMITHING_COMPONENT_BY_PRODUCT = new Map([
   ["Dagger", 9], ["Sword", 10], ["Scimitar", 11], ["Long sword", 12],
   ["2 hand sword", 13], ["Axe", 14], ["Mace", 15], ["Warhammer", 16],
@@ -38,7 +47,7 @@ const SMITHING_COMPONENT_BY_PRODUCT = new Map([
   ["Plate skirt", 21], ["Plate body", 22], ["Nails", 23], ["Med helm", 24],
   ["Full helm", 25], ["Square shield", 26], ["Kite shield", 27],
   ["Dart tips", 29], ["Arrowtips", 30], ["Throwing knives", 31],
-  ["Studs", 32], ["Bolts (unf)", 34],
+  ["Lamp frame", 28], ["Studs", 32], ["Bolts (unf)", 34],
 ]);
 const SMITHING_PRODUCT_BY_COMPONENT = new Map(
   [...SMITHING_COMPONENT_BY_PRODUCT].map(([product, component]) => [component, product])
@@ -68,7 +77,7 @@ const SMITHING_QUANTITY_MODE_BUTTON_IDS = new Set(
   )
 );
 const SMITHING_ALL_QUANTITY_CAP = 28;
-// player -> selected quantity ("all" or a number); defaults to 1 when unset.
+// player -> selected quantity ("all" or a number); kept until disconnect.
 const ACTIVE_SMITHING_QUANTITY = new Map();
 // Widget transmit flags: bit (opIndex+1) must be set for that right-click op to reach the
 // server (see WidgetActionRouter.shouldTransmitAction on the client). The skillmulti list
@@ -301,6 +310,7 @@ const SMITHABLE_EQUIPMENT_DATA = [
   ["Bolts (unf)", 2353, 9378, 10, 1121, 4, 11461, 33, 1, 11459],
   ["Cannon ball", 2353, 2, 4, 1123, 3, 1096, 35, 1, 1132],
   ["Studs", 2353, 2370, 1, 1123, 4, 1134, 36, 1, 1135],
+  ["Lamp frame", 2353, 4544, 1, 0, 0, 0, 49, 1, 0, 25],
   ["Dagger", 2359, 1209, 1, 1119, 0, 1094, 50, 1, 1125],
   ["Axe", 2359, 1355, 1, 1120, 0, 1091, 51, 1, 1126],
   ["Mace", 2359, 1428, 1, 1120, 1, 1093, 52, 1, 1129],
@@ -384,6 +394,7 @@ const SMITHABLE_EQUIPMENT = SMITHABLE_EQUIPMENT_DATA.map(
     requiredLevel,
     barsRequired,
     barFrame,
+    xp,
   ]) => ({
     name,
     barId,
@@ -395,6 +406,7 @@ const SMITHABLE_EQUIPMENT = SMITHABLE_EQUIPMENT_DATA.map(
     requiredLevel,
     barsRequired,
     barFrame,
+    xp: SMITHING_XP_PER_BAR.get(barId) * barsRequired,
   })
 );
 
@@ -552,7 +564,7 @@ function performSmithAction(player, smithable) {
   inventory.deleteNumber(smithable.barId, smithable.barsRequired);
   inventory.addItem(new Item(smithable.itemId, smithable.amount));
   player.performAnimation(SMITH_ANIMATION);
-  player.getSkillManager().addExperiences(Skill.SMITHING, 10);
+  player.getSkillManager().addExperiences(Skill.SMITHING, smithable.xp);
 
   player.sendMessage("You hammer the metal and shape an item.");
   pluginApi?.emitCustomEvent("smithing:success", {
@@ -595,7 +607,6 @@ function closeSmithingInterface(player) {
     return;
   }
   ACTIVE_SMITHING_MENUS.delete(player);
-  ACTIVE_SMITHING_QUANTITY.delete(player);
   player.setInterfaceId(-1);
   player.getPacketSender().closeSubInterface(MAIN_MODAL_TARGET_UID);
 }
@@ -732,7 +743,6 @@ function openEquipmentCreationInterface(player, preferredBarId = null) {
   }
 
   ACTIVE_SMITHING_MENUS.set(player, selectedBar.barId);
-  ACTIVE_SMITHING_QUANTITY.delete(player);
   player.setInterfaceId(SMITHING_INTERFACE_ID);
   // Matches OpenRune's AnvilSmithingScript.openSmithingInterface: set the bar-type varbit,
   // then open the modal. Interface 312 populates its own product icons - its onLoad script
@@ -861,7 +871,6 @@ function handleSmithingInterfaceAction(activeSessions, player, buttonId) {
   const amount = selected === "all" ? SMITHING_ALL_QUANTITY_CAP : selected;
 
   ACTIVE_SMITHING_MENUS.delete(player);
-  ACTIVE_SMITHING_QUANTITY.delete(player);
   const started = startSmithingSession(activeSessions, player, smithable, amount);
   if (started) {
     closeSmithingInterfaceNextTick(player);
